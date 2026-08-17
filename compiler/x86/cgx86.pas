@@ -2914,6 +2914,18 @@ unit cgx86;
          ((dstref.segment<>NR_NO) and (dstref.segment<>NR_FS) and (dstref.segment<>NR_GS)) then
         cm:=copy_string;
 {$endif not i8086}
+{$ifdef i8086}
+      { FPC_MOVE takes the two addresses as pointer parameters, so in a near
+        data memory model it cannot be handed a reference that lives outside
+        DGROUP: a_loadaddr_ref_cgpara has nowhere to put the segment and drops
+        it. The inline copies emit the segment override themselves, so fall
+        back to the mode getcopymode had chosen before substituting the call. }
+      if (cm=copy_fpc_move) and
+         (current_settings.x86memorymodel in x86_near_data_models) and
+         (((srcref.segment<>NR_NO) and not(is_segment_reg(srcref.segment) and segment_regs_equal(srcref.segment,NR_DS))) or
+          ((dstref.segment<>NR_NO) and not(is_segment_reg(dstref.segment) and segment_regs_equal(dstref.segment,NR_DS)))) then
+        cm:=copy_string;
+{$endif i8086}
       case cm of
         copy_mov:
           begin
