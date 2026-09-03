@@ -2428,6 +2428,14 @@ unit cgcpu;
                 { if you (think you) know what you are doing              }
                 (po_assembler in current_procinfo.procdef.procoptions)) then
               stacksize := align(stacksize+sizeof(aint),target_info.stackalign) - sizeof(aint);
+            { The callee-saved registers were pushed last by g_proc_entry, below
+              the locals and below the DS, SI and DI saved for win16 exports and
+              the huge model, so they are restored first.  With an open array
+              parameter SP is not at the bottom of the frame here, so they are
+              loaded through BP instead of popped. }
+            if (current_procinfo.framepointer<>NR_STACK_POINTER_REG) and
+               not paramanager.use_fixed_stack then
+              internal_restore_regs(list,not(pi_has_open_array_parameter in current_procinfo.flags));
             if (po_exports in current_procinfo.procdef.procoptions) and
                (target_info.system=system_i8086_win16) then
               begin
@@ -2447,6 +2455,8 @@ unit cgcpu;
               begin
                 if (stacksize<>0) then
                   cg.a_op_const_reg(list,OP_ADD,OS_ADDR,stacksize,current_procinfo.framepointer);
+                if not paramanager.use_fixed_stack then
+                  internal_restore_regs(list,true);
               end
             else
               begin

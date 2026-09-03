@@ -3430,6 +3430,9 @@ unit cgx86;
 {$ifdef i8086}
         dgroup: treference;
         fardataseg: treference;
+        { bytes pushed after the locals by the win16 export and huge model
+          prologues: the callee-saved registers end up below them }
+        saved_extra: longint;
 {$endif i8086}
 
       procedure push_regs;
@@ -3461,6 +3464,9 @@ unit cgx86;
       begin
         regsize:=0;
         stackmisalignment:=0;
+{$ifdef i8086}
+        saved_extra:=0;
+{$endif i8086}
         list.concat(tai_regalloc.alloc(NR_STACK_POINTER_REG,nil));
 {$ifdef i8086}
         { Win16 callback/exported proc prologue support.
@@ -3588,10 +3594,10 @@ unit cgx86;
             inc(stackmisalignment,sizeof(pint));
             if current_procinfo.framepointer=NR_STACK_POINTER_REG then
               begin
-{$ifdef i386}
+{$if defined(i386) or defined(i8086)}
                 if (not paramanager.use_fixed_stack) then
                   push_regs;
-{$endif i386}
+{$endif i386 or i8086}
                 CGmessage(cg_d_stackframe_omited);
               end
             else
@@ -3655,12 +3661,14 @@ unit cgx86;
                  (target_info.system=system_i8086_win16) then
                 begin
                   list.concat(Taicpu.op_reg(A_PUSH,S_W,NR_DS));
+                  inc(saved_extra,2);
                   list.concat(Taicpu.Op_reg_reg(A_MOV,S_W,NR_AX,NR_DS));
                 end
               else if (current_settings.x86memorymodel=mm_huge) and
                       not (po_interrupt in current_procinfo.procdef.procoptions) then
                 begin
                   list.concat(Taicpu.op_reg(A_PUSH,S_W,NR_DS));
+                  inc(saved_extra,2);
                   reference_reset(fardataseg,0,[]);
                   fardataseg.refaddr:=addr_fardataseg;
                   if current_procinfo.procdef.proccalloption=pocall_register then
@@ -3685,39 +3693,43 @@ unit cgx86;
               begin
                 list.concat(Taicpu.Op_reg(A_PUSH,S_W,NR_SI));
                 list.concat(Taicpu.Op_reg(A_PUSH,S_W,NR_DI));
+                inc(saved_extra,4);
               end;
 {$endif i8086}
 
-{$ifdef i386}
+{$if defined(i386) or defined(i8086)}
             if (not paramanager.use_fixed_stack) and
                (current_procinfo.framepointer<>NR_STACK_POINTER_REG) and
                (current_procinfo.procdef.proctypeoption<>potype_exceptfilter) then
               begin
                 regsize:=0;
                 push_regs;
+{$ifdef i8086}
+                inc(regsize,saved_extra);
+{$endif i8086}
                 reference_reset_base(current_procinfo.save_regs_ref,
                   current_procinfo.framepointer,
                   -(localsize+regsize),ctempposinvalid,sizeof(aint),[]);
               end;
-{$endif i386}
+{$endif i386 or i8086}
           end;
       end;
 
 
     procedure tcgx86.g_save_registers(list: TAsmList);
       begin
-{$ifdef i386}
+{$if defined(i386) or defined(i8086)}
         if paramanager.use_fixed_stack then
-{$endif i386}
+{$endif i386 or i8086}
           inherited g_save_registers(list);
       end;
 
 
     procedure tcgx86.g_restore_registers(list: TAsmList);
       begin
-{$ifdef i386}
+{$if defined(i386) or defined(i8086)}
         if paramanager.use_fixed_stack then
-{$endif i386}
+{$endif i386 or i8086}
           inherited g_restore_registers(list);
       end;
 
