@@ -48,6 +48,8 @@ fork from silently accumulating changes nobody can account for.
 | 3 | Version banner marker | `product-version-marker` | **fork-only** |
 | 4 | This file | `product-patches-manifest` | **fork-only** |
 | 5 | Build workflow | `product-ci` | **fork-only** |
+| 6 | Callee-saved registers pushed and popped on i8086 | `i8086-push-saved-regs` | in `i8086-integration` (2026-09-04); not submitted |
+| 7 | Near pointer in a register parameter tried to store its segment | `i8086-register-paraloc-near-pointer` | in `i8086-integration` (2026-09-04); not submitted |
 
 ### 1. FPC_MOVE parameter order in `g_concatcopy_move`
 
@@ -104,6 +106,31 @@ has no CI for this target, which is how patch 1 stayed broken for a year and a
 half.
 
 Fork-only: it is CI for this repository's layout, not for upstream's.
+
+### 6. Callee-saved registers pushed and popped on i8086
+
+Under the `register` and `cdecl` conventions the callee preserves `SI`, `DI`
+and `BP`.  `tcgx86.g_proc_entry` pushes them after the locals on i386, but the
+block was under `{$ifdef i386}`, so i8086 fell through to the generic
+`tcg.g_save_registers`: a frame slot per register, `sub sp,N` plus a 3-byte
+`mov` each way — 9 bytes where `push`/`pop` cost 2.  The patch enables the
+i386 path for i8086, accounts for the `DS`, `SI` and `DI` that the win16-export
+and huge-model prologues push after the locals, and restores through `BP`
+instead of popping when an open array copy has moved `SP`.
+
+On the Q1 corpus with `-Ccregister` the 42 common tests go from 1275 to 1152
+bytes; the `pascal` columns do not change, that convention preserves nothing
+but `BP`.  Run-time check: `../issues/U10-register-abi/run-runtime.ps1`.
+
+### 7. Near pointer in a register parameter tried to store its segment
+
+With `-Ccregister` any call passing a `var` argument aborted the compiler with
+`Internal error 2017091104`.  The generic `tcg.a_loadaddr_ref_cgpara` loads
+the address straight into the parameter register, and the low-level
+`tcgx86.a_loadaddr_ref_reg` on i8086, seeing a segment in the reference, moves
+it into `GetNextReg` of that register — which a physical register does not
+have.  For a 2-byte near pointer the segment is now dropped before the load,
+exactly as `tcg8086.a_loadaddr_ref_cgpara` already does for a 2-byte push.
 
 ## Scope of the product
 
