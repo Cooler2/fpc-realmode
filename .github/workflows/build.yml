@@ -1,0 +1,117 @@
+# Build the 16-bit x86 cross compiler and its RTL matrix.
+#
+# The base is pinned and rebased about once a year, so this does not run on
+# every branch: it runs on the integration branch and on demand.  Upstream FPC
+# has no CI for this target at all, which is why defect U5 survived from May
+# 2024 to August 2026 -- see PATCHES.md.
+#
+# Linux only for now.  On ubuntu-24.04 the 3.2.2 starting compiler that
+# Makefile.fpc insists on is one apt package away; a win64 runner has no such
+# package and needs the official installer fetched and cached, which is a
+# second commit, not a blocker for the first green run.
+
+name: build
+
+on:
+  push:
+    branches: [i8086-integration]
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compiler:
+    name: cross compiler
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Install the starting compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fpc
+          # Makefile.fpc accepts 3.2.2 and 3.2.0 only, and aborts otherwise.
+          # ubuntu-24.04 ships 3.2.2+dfsg; fail loudly if that ever changes.
+          test "$(ppcx64 -iV)" = "3.2.2"
+
+      - name: Build ppcross8086
+        # An x86_64-linux host has 80-bit extended, so unlike x86_64-win64 this
+        # needs no -dFPC_SOFT_FPUX80.
+        run: make -C compiler cycle CPU_TARGET=i8086 OS_TARGET=msdos FPC=/usr/bin/ppcx64 RELEASE=1
+
+      - name: Check the version marker
+        # The product must be distinguishable from an official build; a silent
+        # loss of the marker is the kind of thing nobody notices until a bug
+        # report arrives quoting a version that does not identify anything.
+        run: |
+          compiler/ppcross8086 -h | head -1
+          test "$(compiler/ppcross8086 -iW)" = "3.3.1-realmode"
+          test "$(compiler/ppcross8086 -iV)" = "3.3.1"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ppcross8086
+          path: compiler/ppcross8086
+          if-no-files-found: error
+
+  rtl:
+    name: rtl ${{ matrix.target }} ${{ matrix.model }} ${{ matrix.cpu }}
+    needs: compiler
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [msdos, embedded]
+        model: [Small, Large]
+        # 80286 is the floor of the product; 8086 and 80186 are not built here.
+        cpu: [80286, 80386]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Install nasm
+        # nasm is the only target tool the RTL build needs.  wlib and wlink
+        # from Open Watcom are needed to link a program, not to compile units,
+        # so they belong to the runtime job below, not here.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nasm
+          nasm -v
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ppcross8086
+          path: compiler
+      - run: chmod +x compiler/ppcross8086
+
+      - name: Build the RTL
+        # CREATESMART=1 is not optional: the i8086 system unit exceeds a 64k
+        # code segment without smart linking (Fatal: Code segment too large).
+        # Empty BINUTILSPREFIX keeps the assembler from being looked up as
+        # <target>-nasm, which exists under no such name.
+        # -Wm belongs to the target build; the host RTL rejects it, which is
+        # why it travels here and not in a top-level OPT.
+        run: |
+          make -C rtl all \
+            CPU_TARGET=i8086 OS_TARGET=${{ matrix.target }} \
+            FPC="$PWD/compiler/ppcross8086" \
+            BINUTILSPREFIX= RELEASE=1 CREATESMART=1 \
+            OPT="-Wm${{ matrix.model }} -Cp${{ matrix.cpu }}"
+
+      - name: Show what was built
+        run: ls -l rtl/units/i8086-${{ matrix.target }} | head -20
+
+  # TODO: run the built code under DOS.  This is the hole U5 fell through: the
+  # RTL compiled cleanly for a year and a half while nothing it produced could
+  # run.  Candidates to investigate: dosbox from apt, or FreeDOS under QEMU.
+  # Needs wlink from Open Watcom (rolling 'Current-build' snapshot,
+  # ow-snapshot.tar.xz; the local toolchain here is the 2026-08-03 build).
+
+  # TODO: compare code sizes against the baseline in issues/Q1-optimization-
+  # matrix/.  The corpus already exists and is meant to be re-run, which turns
+  # 'the rebase did not spoil codegen' into one job instead of an investigation.
