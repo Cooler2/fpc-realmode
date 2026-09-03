@@ -1623,6 +1623,16 @@ unit cgcpu;
                       end;
                 end;
               end
+            else if tcgsize2size[cgpara.Size]=2 then
+              begin
+                { a near pointer has no room for the segment, so it is dropped
+                  here as it is for a 2-byte push above; otherwise the low
+                  level a_loadaddr_ref_reg tries to put it into the next
+                  register of the parameter register, which has none }
+                tmpref:=r;
+                tmpref.segment:=NR_NO;
+                inherited a_loadaddr_ref_cgpara(list,tmpref,cgpara);
+              end
             else
               inherited a_loadaddr_ref_cgpara(list,r,cgpara);
           end;
