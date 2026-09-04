@@ -50,6 +50,7 @@ fork from silently accumulating changes nobody can account for.
 | 5 | Build workflow | `product-ci` | **fork-only** |
 | 6 | Callee-saved registers pushed and popped on i8086 | `i8086-push-saved-regs` | in `i8086-integration` (2026-09-04); not submitted |
 | 7 | Near pointer in a register parameter tried to store its segment | `i8086-register-paraloc-near-pointer` | in `i8086-integration` (2026-09-04); not submitted |
+| 8 | Frame omitted in i8086 procedures without temps | `i8086-omit-leaf-frame` | in `i8086-integration` (2026-09-04); not submitted |
 
 ### 1. FPC_MOVE parameter order in `g_concatcopy_move`
 
@@ -131,6 +132,34 @@ the address straight into the parameter register, and the low-level
 it into `GetNextReg` of that register — which a physical register does not
 have.  For a 2-byte near pointer the segment is now dropped before the load,
 exactly as `tcg8086.a_loadaddr_ref_cgpara` already does for a 2-byte push.
+
+### 8. Frame omitted in i8086 procedures without temps
+
+`cs_opt_stackframe` is part of `-O2` on i8086, but the block that acts on it
+in `tcgprocinfo.setup_tempgen` (`psub.pas`) was under
+`{$if defined(i386) or defined(x86_64) or defined(arm) ...}`, so every i8086
+procedure got `push bp / mov bp,sp / leave` — 4 bytes around a leaf whose body
+is one instruction.  Adding i8086 to the gate is not enough: 16-bit x86 has no
+`[sp+N]` addressing, and the spill code of the register allocator puts the
+temp reference straight into the instruction, past `make_simple_ref`.
+
+The patch makes the decision in two steps.  A procedure that passes the
+generic test is generated with `framepointer=sp`; `tcpuprocinfo.calc_stackframe_size`,
+which runs right before the entry code, after register allocation, puts the
+frame back if any temp exists (spilled register, local that could not stay in
+a register, temp of an expression), and `postprocess_code` rewrites every
+`[sp+N]` to `[bp+N']` by `save_regs_ref.offset` and fixes the `localloc` of
+locals and parameters for the debug info.  On i8086 this is also the right
+cost model: an `sp` relative access costs a `mov reg,sp` and a base register,
+a frame costs 4 bytes per procedure.  `make_simple_ref` no longer lowers
+`[sp+N]` in such a procedure; parents of nested procedures and procedures
+using exceptions are excluded, and `cs_useebp` keeps `bp` reserved there.
+
+On the Q1 corpus with `-Ccregister` 39 of the 42 common tests lose 4 bytes,
+`R4` one; the column goes from 1152 to 1019.  The `pascal` columns do not
+change, every routine there has a stack parameter.  Run-time check:
+`../issues/U12-leaf-frame/run-runtime.ps1` (medium and large model, `-Ct`,
+`-Cp8086`; the RTL for msdos rebuilt in both models without an error).
 
 ## Scope of the product
 
