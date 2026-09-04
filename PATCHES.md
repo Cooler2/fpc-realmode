@@ -51,6 +51,7 @@ fork from silently accumulating changes nobody can account for.
 | 6 | Callee-saved registers pushed and popped on i8086 | `i8086-push-saved-regs` | in `i8086-integration` (2026-09-04); not submitted |
 | 7 | Near pointer in a register parameter tried to store its segment | `i8086-register-paraloc-near-pointer` | in `i8086-integration` (2026-09-04); not submitted |
 | 8 | Frame omitted in i8086 procedures without temps | `i8086-omit-leaf-frame` | in `i8086-integration` (2026-09-04); not submitted |
+| 9 | Only the registers a known callee touches are protected around a call | `i8086-known-callee-clobbers` (on top of 8) | in `i8086-integration` (2026-09-05); not submitted |
 
 ### 1. FPC_MOVE parameter order in `g_concatcopy_move`
 
@@ -160,6 +161,38 @@ On the Q1 corpus with `-Ccregister` 39 of the 42 common tests lose 4 bytes,
 change, every routine there has a stack parameter.  Run-time check:
 `../issues/U12-leaf-frame/run-runtime.ps1` (medium and large model, `-Ct`,
 `-Cp8086`; the RTL for msdos rebuilt in both models without an error).
+
+### 9. Only the registers a known callee touches are protected around a call
+
+Before a call `tcgcallnode.pass_generate_code` allocates the volatile
+registers of the callee's convention, so nothing the caller keeps in them
+survives the call; on i8086 that is AX, DX, CX, BX under `register` and
+everything but BP under `pascal`.  A loop with a call therefore keeps its
+counter and bounds in memory even when the callee is a one-instruction leaf.
+
+`tprocdef` gets `used_int_regs`/`used_int_regs_known`; on i8086
+`tcpuprocinfo.record_used_int_regs` (end of `postprocess_code`, when the code
+is final) fills them with the allocator's `used_in_proc` — which includes the
+volatile sets assumed around every call in the body, so the knowledge is
+transitive — plus a scan of the finished list for register operands, implicit
+register changes (`insprop[].Ch`) and regalloc marks, because the prologue,
+the epilogue and the peephole optimizer (`GetIntRegisterBetween` takes free
+volatile registers) add uses after the allocator ran.  Bodies with assembler
+are not recorded; an instruction with `Ch_All` other than `call`/`ret*`
+(`int`, `into`) gives up on the body.  `ncgcal` then intersects the
+convention's volatile set with the recorded one for a direct call to a
+procdef whose body was generated earlier in the same unit, unless it is
+virtual or external.  Forward and recursive calls, procedure variables and
+other units keep the convention; the set is not stored in the ppu.
+
+Q1 corpus: only `C2`, `C6`, `I2` change, all down — with `-Ccregister`
+49 → 29, 46 → 27, 49 → 29 (column 1019 → 980), `pascal` column 1289 → 1272.
+MoDOS kernel 32694 → 32472, Retro Bench 115762 → 115603 (both `pascal`).
+Run-time check: `../issues/U7-known-clobbers/run-runtime.ps1` — 17 cases,
+both conventions, `-O-`/`-O2`/`-O3`, medium and large, `-Ct`, `-Cp8086`; the
+msdos RTL rebuilt in both models.  A pre-existing `Internal error 200408162`
+(`-WmLarge -Ccregister`, local passed to a `var` parameter) was found on the
+way and is recorded in `../issues/U10-register-abi/README.md`.
 
 ## Scope of the product
 
