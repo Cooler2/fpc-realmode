@@ -1027,6 +1027,15 @@ implementation
            secondpass(tnode(callinitblock));
 
          regs_to_save_int:=paramanager.get_volatile_registers_int(procdefinition.proccalloption);
+         { a routine whose body was already generated in this unit has
+           recorded what it touches (tprocdef.used_int_regs): only that part
+           of the volatile set needs protecting. Direct calls only: the
+           target of a virtual or external call is not that body }
+         if (procdefinition.typ=procdef) and
+            tprocdef(procdefinition).used_int_regs_known and
+            not(po_virtualmethod in procdefinition.procoptions) and
+            not(po_external in procdefinition.procoptions) then
+           regs_to_save_int:=regs_to_save_int*tprocdef(procdefinition).used_int_regs;
          regs_to_save_address:=paramanager.get_volatile_registers_address(procdefinition.proccalloption);
          regs_to_save_fpu:=paramanager.get_volatile_registers_fpu(procdefinition.proccalloption);
          regs_to_save_mm:=paramanager.get_volatile_registers_mm(procdefinition.proccalloption);

@@ -40,6 +40,7 @@ unit cpupi;
          procedure restore_frame_references(list : TAsmList);
          procedure restore_frame_localloc(p : TObject; arg : pointer);
          procedure check_no_stack_references(list : TAsmList);
+         procedure record_used_int_regs;
        public
          constructor create(aparent:tprocinfo);override;
          procedure set_first_temp_offset;override;
@@ -217,6 +218,82 @@ unit cpupi;
       end;
 
 
+    procedure tcpuprocinfo.record_used_int_regs;
+      { Tell the procdef which integer registers the finished code touches,
+        so that callers compiled later in this unit protect only those
+        across the call instead of the whole volatile set of the convention
+        (tcgcallnode.pass_generate_code). The register allocator's
+        used_in_proc has what it saw, including the volatile set assumed
+        around every call in the body; the scan adds what appeared after it
+        ran: prologue and epilogue, and registers the peephole optimizer
+        picked itself (GetIntRegisterBetween takes a free volatile register
+        without telling the allocator). Reads count as well: cheap, and the
+        set is only compared with the volatile registers anyway. }
+      var
+        p : tai;
+        regs : tcpuregisterset;
+        ch : set of TInsChange;
+        i,r : longint;
+      begin
+        if (po_assembler in procdef.procoptions) or
+           (pi_is_assembler in flags) or
+           (pi_has_assembler_block in flags) then
+          exit;
+        regs:=cg.rg[R_INTREGISTER].used_in_proc;
+        p:=tai(aktproccode.first);
+        while assigned(p) do
+          begin
+            case p.typ of
+              ait_regalloc:
+                if (tai_regalloc(p).ratype=ra_alloc) and
+                   (getregtype(tai_regalloc(p).reg)=R_INTREGISTER) then
+                  include(regs,getsupreg(tai_regalloc(p).reg));
+              ait_instruction:
+                begin
+                  for i:=0 to taicpu(p).ops-1 do
+                    case taicpu(p).oper[i]^.typ of
+                      top_reg:
+                        if getregtype(taicpu(p).oper[i]^.reg)=R_INTREGISTER then
+                          include(regs,getsupreg(taicpu(p).oper[i]^.reg));
+                      top_ref:
+                        begin
+                          if getregtype(taicpu(p).oper[i]^.ref^.base)=R_INTREGISTER then
+                            include(regs,getsupreg(taicpu(p).oper[i]^.ref^.base));
+                          if getregtype(taicpu(p).oper[i]^.ref^.index)=R_INTREGISTER then
+                            include(regs,getsupreg(taicpu(p).oper[i]^.ref^.index));
+                        end;
+                      else
+                        ;
+                    end;
+                  ch:=insprop[taicpu(p).opcode].Ch;
+                  { a call's clobbers are the regalloc marks around it and a
+                    return changes nothing, yet both carry Ch_All; anything
+                    else with it (int, into, cmpxchg) is not generated from
+                    Pascal, so just give up on such a body }
+                  if Ch_All in ch then
+                    case taicpu(p).opcode of
+                      A_CALL,A_RET,A_RETN,A_RETF,A_RETW,A_RETNW,A_RETFW:
+                        ;
+                      else
+                        exit;
+                    end;
+                  { Ch_R/W/RW/M groups are ordered like the superregisters:
+                    ax cx dx bx sp bp si di }
+                  for r:=0 to 7 do
+                    if [TInsChange(ord(Ch_REAX)+r),TInsChange(ord(Ch_WEAX)+r),
+                        TInsChange(ord(Ch_RWEAX)+r),TInsChange(ord(Ch_MEAX)+r)]*ch<>[] then
+                      include(regs,r);
+                end;
+              else
+                ;
+            end;
+            p:=tai(p.next);
+          end;
+        procdef.used_int_regs:=regs;
+        procdef.used_int_regs_known:=true;
+      end;
+
+
     procedure tcpuprocinfo.postprocess_code;
       begin
         if frame_restored then
@@ -228,6 +305,8 @@ unit cpupi;
           every instruction like the 8087, so I'm including it just in case }
         if current_settings.cputype<=cpu_186 then
           insert_8087_fwaits(aktproccode);
+        { the code is final now }
+        record_used_int_regs;
       end;
 
 begin

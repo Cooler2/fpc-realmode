@@ -36,7 +36,7 @@ interface
        { aasm }
        aasmtai,
        cpuinfo,
-       cgbase,
+       cgbase,cgutils,
        parabase
        ;
 
@@ -899,6 +899,15 @@ interface
           struct : tabstractrecorddef;
           structderef : tderef;
           implprocoptions: timplprocoptions;
+          { integer registers the generated body touches: everything its
+            code reads or writes, plus what it assumes its own callees
+            clobber. Valid only while used_int_regs_known is set, which a
+            target does after generating the body (tcpuprocinfo.
+            record_used_int_regs on i8086); callers in the same unit then
+            protect only these across the call (tcgcallnode). Not stored
+            in the ppu: procedures from other units keep the convention. }
+          used_int_regs : tcpuregisterset;
+          used_int_regs_known : boolean;
           { import info }
           import_dll,
           import_name : pshortstring;
