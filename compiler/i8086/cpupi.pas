@@ -33,7 +33,13 @@ unit cpupi;
     type
        tcpuprocinfo = class(tcgprocinfo)
        private
+         { set by calc_stackframe_size when a procedure that omitted its frame
+           turned out to need temps after all, see there }
+         frame_restored : boolean;
          procedure insert_8087_fwaits(list : TAsmList);
+         procedure restore_frame_references(list : TAsmList);
+         procedure restore_frame_localloc(p : TObject; arg : pointer);
+         procedure check_no_stack_references(list : TAsmList);
        public
          constructor create(aparent:tprocinfo);override;
          procedure set_first_temp_offset;override;
@@ -46,13 +52,13 @@ unit cpupi;
   implementation
 
     uses
-      cutils,
+      cutils,verbose,
       systems,globals,globtype,
       aasmtai,aasmcpu,
       cgobj,tgobj,paramgr,
       cpubase,cpuinfo,
       cgutils,
-      symconst;
+      symconst,symtype,symsym,cgbase;
 
     constructor tcpuprocinfo.create(aparent:tprocinfo);
       begin
@@ -87,6 +93,100 @@ unit cpupi;
           { aligned during stack frame allocation, because also depends number
             of saved registers }
           result:=tg.direction*tg.lasttemp+maxpushedparasize;
+
+        { A procedure that omitted its frame (tcgprocinfo.setup_tempgen) may
+          still have ended up with temps: spilled registers, locals that could
+          not stay in a register, temps of expressions.  i8086 cannot address
+          memory relative to sp, and a bp frame (4 bytes) is cheaper than a
+          "mov reg,sp" in front of every access, so the frame is put back.
+          This is called right before the entry code is generated, which is
+          the last moment the frame pointer can change; the sp based
+          references already emitted are rewritten to bp by postprocess_code,
+          once the entry code has fixed the distance between sp and bp. }
+        if (result<>0) and
+           (framepointer=NR_STACK_POINTER_REG) and
+           (pi_no_framepointer_needed in flags) then
+          begin
+            framepointer:=NR_FRAME_POINTER_REG;
+            exclude(flags,pi_no_framepointer_needed);
+            frame_restored:=true;
+          end;
+      end;
+
+
+    procedure tcpuprocinfo.restore_frame_localloc(p : TObject; arg : pointer);
+      begin
+        if (tsym(p).typ in [paravarsym,localvarsym]) and
+           (tabstractnormalvarsym(p).localloc.loc in [LOC_REFERENCE,LOC_CREFERENCE]) and
+           (tabstractnormalvarsym(p).localloc.reference.base=NR_STACK_POINTER_REG) then
+          with tabstractnormalvarsym(p).localloc.reference do
+            begin
+              base:=NR_FRAME_POINTER_REG;
+              inc(offset,plongint(arg)^);
+              if segment=NR_SS then
+                segment:=NR_NO;
+            end;
+      end;
+
+
+    procedure tcpuprocinfo.restore_frame_references(list : TAsmList);
+      var
+        delta : longint;
+        curtai : tai;
+        i : longint;
+      begin
+        { g_proc_entry set save_regs_ref to the bottom of the frame, below the
+          locals and the pushed registers; that is where sp stays for the whole
+          body, so sp = bp + save_regs_ref.offset }
+        if save_regs_ref.base<>NR_FRAME_POINTER_REG then
+          internalerror(2026090401);
+        delta:=save_regs_ref.offset;
+        curtai:=tai(list.First);
+        while assigned(curtai) do
+          begin
+            if curtai.typ=ait_instruction then
+              for i:=0 to taicpu(curtai).ops-1 do
+                if taicpu(curtai).oper[i]^.typ=top_ref then
+                  with taicpu(curtai).oper[i]^.ref^ do
+                    begin
+                      if index=NR_STACK_POINTER_REG then
+                        internalerror(2026090402);
+                      if base=NR_STACK_POINTER_REG then
+                        begin
+                          base:=NR_FRAME_POINTER_REG;
+                          inc(offset,delta);
+                          { bp addresses the stack segment by default }
+                          if segment=NR_SS then
+                            segment:=NR_NO;
+                        end;
+                    end;
+            curtai:=tai(curtai.Next);
+          end;
+        { the locations the debug info will describe }
+        procdef.parast.SymList.ForEachCall(@restore_frame_localloc,@delta);
+        procdef.localst.SymList.ForEachCall(@restore_frame_localloc,@delta);
+      end;
+
+
+    procedure tcpuprocinfo.check_no_stack_references(list : TAsmList);
+      var
+        curtai : tai;
+        i : longint;
+      begin
+        { without temps nothing may address memory through sp: such a
+          reference would have to come from a path setup_tempgen did not
+          exclude, and it cannot be encoded }
+        curtai:=tai(list.First);
+        while assigned(curtai) do
+          begin
+            if curtai.typ=ait_instruction then
+              for i:=0 to taicpu(curtai).ops-1 do
+                if (taicpu(curtai).oper[i]^.typ=top_ref) and
+                   ((taicpu(curtai).oper[i]^.ref^.base=NR_STACK_POINTER_REG) or
+                    (taicpu(curtai).oper[i]^.ref^.index=NR_STACK_POINTER_REG)) then
+                  internalerror(2026090403);
+            curtai:=tai(curtai.Next);
+          end;
       end;
 
 
@@ -119,6 +219,11 @@ unit cpupi;
 
     procedure tcpuprocinfo.postprocess_code;
       begin
+        if frame_restored then
+          restore_frame_references(aktproccode)
+        else if (framepointer=NR_STACK_POINTER_REG) and
+                (pi_no_framepointer_needed in flags) then
+          check_no_stack_references(aktproccode);
         { nickysn note: I don't know if the 187 requires FWAIT before
           every instruction like the 8087, so I'm including it just in case }
         if current_settings.cputype<=cpu_186 then

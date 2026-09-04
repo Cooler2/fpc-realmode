@@ -659,14 +659,30 @@ unit cgx86;
         { i8086 does not support stack relative addressing }
         if ref.base = NR_STACK_POINTER_REG then
           begin
-            href:=ref;
-            href.base:=getaddressregister(list);
-            { let the register allocator find a suitable register for the reference }
-            list.Concat(Taicpu.op_reg_reg(A_MOV, S_W, NR_SP, href.base));
-            { if DS<>SS in the current memory model, we need to add an SS: segment override as well }
-            if (ref.segment=NR_NO) and not segment_regs_equal(NR_DS,NR_SS) then
-              href.segment:=NR_SS;
-            ref:=href;
+            if assigned(current_procinfo) and
+               (pi_no_framepointer_needed in current_procinfo.flags) then
+              begin
+                { The procedure omitted its frame.  A stack relative reference
+                  here means a temp, and a temp means the frame will be put
+                  back after register allocation, with every sp based reference
+                  rewritten to bp (tcpuprocinfo.calc_stackframe_size and
+                  postprocess_code).  Keep the reference as it is; only make the
+                  segment explicit, so that code deciding between DS and SS by
+                  the base register does not mistake the stack for data. }
+                if (ref.segment=NR_NO) and not segment_regs_equal(NR_DS,NR_SS) then
+                  ref.segment:=NR_SS;
+              end
+            else
+              begin
+                href:=ref;
+                href.base:=getaddressregister(list);
+                { let the register allocator find a suitable register for the reference }
+                list.Concat(Taicpu.op_reg_reg(A_MOV, S_W, NR_SP, href.base));
+                { if DS<>SS in the current memory model, we need to add an SS: segment override as well }
+                if (ref.segment=NR_NO) and not segment_regs_equal(NR_DS,NR_SS) then
+                  href.segment:=NR_SS;
+                ref:=href;
+              end;
           end;
 
         { if there is a segment in an int register, move it to ES }

@@ -1027,7 +1027,7 @@ implementation
       end;
 
 
-{$if defined(i386) or defined(x86_64) or defined(arm) or defined(aarch64) or defined(riscv32) or defined(riscv64) or defined(m68k)}
+{$if defined(i386) or defined(x86_64) or defined(i8086) or defined(arm) or defined(aarch64) or defined(riscv32) or defined(riscv64) or defined(m68k)}
     const
       exception_flags: array[boolean] of tprocinfoflags = (
         [],
@@ -1039,7 +1039,7 @@ implementation
       begin
         tg:=tgobjclass.create;
 
-{$if defined(i386) or defined(x86_64) or defined(arm) or defined(aarch64) or defined(m68k)}
+{$if defined(i386) or defined(x86_64) or defined(i8086) or defined(arm) or defined(aarch64) or defined(m68k)}
 {$if defined(arm)}
         { frame and stack pointer must be always the same on arm thumb so it makes no
           sense to fiddle with a frame pointer }
@@ -1093,6 +1093,13 @@ implementation
                { on aarch64, it must be a leaf subroutine }
                 not(pi_do_call in flags) and
 {$endif defined(aarch64)}
+{$if defined(i8086)}
+               { on i8086 the frame is restored after register allocation when
+                 the procedure turns out to need temps (tcpuprocinfo), which
+                 would move the locals a nested procedure addresses through
+                 the parent frame pointer }
+                not(has_nestedprocs) and
+{$endif defined(i8086)}
                 not ((pi_has_stackparameter in flags)
 {$if defined(i386) or defined(x86_64)}
                { Outgoing parameter(s) on stack do not need stackframe on x86 targets
@@ -1102,7 +1109,7 @@ implementation
                   ) and
                 ((flags*([pi_has_assembler_block,pi_is_assembler,
                         pi_needs_stackframe]+
-                        exception_flags[((target_info.cpu=cpu_i386) and (not paramanager.use_fixed_stack))
+                        exception_flags[((target_info.cpu in [cpu_i386,cpu_i8086]) and (not paramanager.use_fixed_stack))
 {$ifndef DISABLE_WIN64_SEH}
                         or (target_info.system=system_x86_64_win64)
 {$endif DISABLE_WIN64_SEH}
