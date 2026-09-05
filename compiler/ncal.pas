@@ -5649,11 +5649,69 @@ implementation
       end;
 
 
+    type
+      ptemprefcount = ^ttemprefcount;
+      ttemprefcount = record
+        info : ptempinfo;
+        n : longint;
+      end;
+
+    function CountTmpRefs(var n: tnode; arg: pointer): foreachnoderesult;
+      begin
+        Result:=fen_false;
+        if (n.nodetype=temprefn) and (ttemprefnode(n).tempinfo=ptemprefcount(arg)^.info) then
+          inc(ptemprefcount(arg)^.n);
+      end;
+
+
     function tcallnode.optimize_funcret_assignment(inlineblock: tblocknode): tnode;
+      { An inlined function whose body is a single assignment to the result
+        does not need the result temp: the block
+
+          tempcreate result
+          [tempcreate p / p:=argument]*      (createinlineparas)
+          result:=expr
+          [tempdelete p]*
+          tempdelete result, release to normal
+          result
+
+        becomes the expression itself, or, when the inliner made temps for
+        parameters, the block
+
+          [tempcreate p / p:=argument]*
+          [tempdelete p, release to normal]*
+          expr
+
+        The parameter temps are released right before their single use in
+        expr, the way the result temp was released before its single use, so
+        the same reference frees them (and the same rule keeps getcopy
+        correct: a released temp may be referenced once more).  Parameters
+        used more than once keep the result temp; the win is mostly for
+        predicates: a Boolean result kept in a temp is materialised and
+        tested again, the expression itself is a condition. }
       var
-        hp  : tstatementnode;
-        hp2 : tnode;
+        hp,
+        resstat : tstatementnode;
+        hp2,
+        expr : tnode;
         resassign : tassignmentnode;
+        paratemps : array of ttempcreatenode;
+        paradeletes : array of ttempdeletenode;
+        npara,ndel,i : longint;
+        cnt : ttemprefcount;
+        newblock : tblocknode;
+        newstat : tstatementnode;
+
+      function paratempindex(info: ptempinfo): longint;
+        var
+          j : longint;
+        begin
+          result:=-1;
+          for j:=0 to npara-1 do
+            if paratemps[j].tempinfo=info then
+              exit(j);
+        end;
+
       begin
         result:=nil;
         if not assigned(funcretnode) or
@@ -5671,7 +5729,33 @@ implementation
            not(nf_is_funcret in hp.left.flags) then
           exit;
 
+        { temps the inliner created for parameters: creation and
+          initialisation, in any order; nothing else may come here }
+        npara:=0;
+        paratemps:=nil;
+        paradeletes:=nil;
         hp:=tstatementnode(hp.right);
+        while assigned(hp) do
+          begin
+            if (hp.left.nodetype=tempcreaten) and
+               not(nf_is_funcret in hp.left.flags) then
+              begin
+                { a reference temp cannot be released to a normal temp }
+                if ti_reference in ttempcreatenode(hp.left).tempflags then
+                  exit;
+                setlength(paratemps,npara+1);
+                paratemps[npara]:=ttempcreatenode(hp.left);
+                inc(npara);
+              end
+            else if (hp.left.nodetype=assignn) and
+                    (tassignmentnode(hp.left).left.nodetype=temprefn) and
+                    (paratempindex(ttemprefnode(tassignmentnode(hp.left).left).tempinfo)>=0) then
+              { initialisation of a parameter temp }
+            else
+              break;
+            hp:=tstatementnode(hp.right);
+          end;
+
         if not(assigned(hp)) or
            (hp.left.nodetype<>assignn)
           { FK: check commented, original comment was:
@@ -5688,6 +5772,7 @@ implementation
           }
           then
           exit;
+        resstat:=hp;
 
         { left must be function result }
         resassign:=tassignmentnode(hp.left);
@@ -5702,10 +5787,28 @@ implementation
           not(nf_is_funcret in hp2.flags) then
           exit;
 
-        { tempdelete to normal of the function result }
+        { the parameter temps are deleted, each once }
+        ndel:=0;
         hp:=tstatementnode(hp.right);
+        while assigned(hp) and
+              (hp.left.nodetype=tempdeleten) and
+              not(ttempdeletenode(hp.left).released_to_normal) do
+          begin
+            i:=paratempindex(ttempdeletenode(hp.left).tempinfo);
+            if i<0 then
+              exit;
+            setlength(paradeletes,ndel+1);
+            paradeletes[ndel]:=ttempdeletenode(hp.left);
+            inc(ndel);
+            hp:=tstatementnode(hp.right);
+          end;
+        if ndel<>npara then
+          exit;
+
+        { tempdelete to normal of the function result }
         if not(assigned(hp)) or
-           (hp.left.nodetype <> tempdeleten) then
+           (hp.left.nodetype <> tempdeleten) or
+           (ttempdeletenode(hp.left).tempinfo<>ttemprefnode(hp2).tempinfo) then
           exit;
 
         { the function result once more }
@@ -5719,8 +5822,54 @@ implementation
         if assigned(hp.right) then
           exit;
 
+        { every parameter temp must be referenced exactly once by the
+          expression, see above }
+        for i:=0 to npara-1 do
+          begin
+            cnt.info:=paratemps[i].tempinfo;
+            cnt.n:=0;
+            foreachnodestatic(resassign.right,@CountTmpRefs,@cnt);
+            if cnt.n<>1 then
+              exit;
+          end;
+
         { we made it! }
-        result:=ctypeconvnode.create_internal(tassignmentnode(resassign).right.getcopy,hp2.resultdef);
+        expr:=resassign.right;
+        resassign.right:=nil;
+        expr:=ctypeconvnode.create_internal(expr,hp2.resultdef);
+        if npara=0 then
+          result:=expr
+        else
+          begin
+            newblock:=internalstatements(newstat);
+            { like the inline block: assigning to it must not assign to the
+              function result }
+            include(newblock.flags,nf_no_lvalue);
+            { the parameter temps: creation and initialisation as they were }
+            hp:=tstatementnode(tstatementnode(inlineblock.left).right);
+            while hp<>resstat do
+              begin
+                addstatement(newstat,hp.left);
+                hp.left:=nil;
+                hp:=tstatementnode(hp.right);
+              end;
+            { their deletion, released to normal temps so that the single
+              reference in expr frees them; the delete node owns the temp
+              info, so the original nodes move as well }
+            for i:=0 to ndel-1 do
+              begin
+                hp:=tstatementnode(inlineblock.left);
+                while assigned(hp) and (hp.left<>paradeletes[i]) do
+                  hp:=tstatementnode(hp.right);
+                if not assigned(hp) then
+                  internalerror(2026090501);
+                hp.left:=nil;
+                paradeletes[i].make_release_to_normal;
+                addstatement(newstat,paradeletes[i]);
+              end;
+            addstatement(newstat,expr);
+            result:=newblock;
+          end;
         node_reset_flags(result,[],[tnf_pass1_done]);
         firstpass(result);
         if assigned(result) then

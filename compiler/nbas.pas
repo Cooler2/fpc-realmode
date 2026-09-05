@@ -331,6 +331,12 @@ interface
 {$endif DEBUG_NODE_XML}
          protected
           release_to_normal : boolean;
+        public
+          { turn a plain delete into a release to a normal temp, for a delete
+            node that is moved in front of the temp's last reference
+            (tcallnode.optimize_funcret_assignment) }
+          procedure make_release_to_normal;
+          property released_to_normal : boolean read release_to_normal;
         private
           tempidx : longint;
         end;
@@ -1749,6 +1755,14 @@ implementation
         inherited create(tempdeleten);
         tempinfo := temp.tempinfo;
         release_to_normal := false;
+      end;
+
+
+    procedure ttempdeletenode.make_release_to_normal;
+      begin
+        if tempinfo^.temptype <> tt_persistent then
+          internalerror(2026090502);
+        release_to_normal := true;
       end;
 
 
