@@ -1858,6 +1858,14 @@ implementation
       end;
 
 
+    var
+      { instruction limits for automatic inlining, with and without -Os;
+        measured on i8086: for speed 16 is the start of a plateau (the same
+        code size up to 24, unlimited is worse), for size no limit wins and
+        12 loses least }
+      autoinline_maxinstr_size : longint = 12;
+      autoinline_maxinstr_speed : longint = 16;
+
     procedure tcgprocinfo.generate_code;
 
        procedure check_for_threadvars_in_initfinal;
@@ -1889,6 +1897,33 @@ implementation
            result:=(complexityAvail>0) and (node_count(code,complexityAvail+1)<=dword(complexityAvail));
          end;
 
+       { The node heuristics above only says that the body is simple; how
+         much code it makes is known after code generation, so the decision
+         is taken there: an auto inlined body must also be short in
+         instructions (prologue, epilogue and return included, since they are
+         what a call site saves), or every call site grows. }
+       function autoinlining_code_small_enough: boolean;
+         var
+           hp : tai;
+           n,limit : longint;
+         begin
+           n:=0;
+           hp:=tai(aktproccode.first);
+           while assigned(hp) do
+             begin
+               if hp.typ=ait_instruction then
+                 inc(n);
+               hp:=tai(hp.next);
+             end;
+           if cs_opt_size in current_settings.optimizerswitches then
+             limit:=autoinline_maxinstr_size
+           else
+             limit:=autoinline_maxinstr_speed;
+           result:=n<=limit;
+           if not result then
+             Comment(V_Debug,'Auto inlining rejected, '+tostr(n)+' instructions: '+procdef.GetTypeName);
+         end;
+
       var
         old_current_procinfo : tprocinfo;
         oldmaxfpuregisters : longint;
@@ -1897,6 +1932,7 @@ implementation
         oldswitches : tlocalswitches;
         templist : TAsmList;
         headertai : tai;
+        autoinline_candidate : boolean;
 
       procedure delete_marker(anode: tasmnode);
         var
@@ -1964,6 +2000,7 @@ implementation
           code:=cnodeutils.wrap_proc_body(procdef,code);
 
         { automatic inlining? }
+        autoinline_candidate:=false;
         if (cs_opt_autoinline in current_settings.optimizerswitches) and
            not(po_noinline in procdef.procoptions) and
            { no inlining yet? }
@@ -1974,12 +2011,13 @@ implementation
             (not(procdef.proccalloption in [pocall_safecall])) and
             heuristics_favors_autoinlining(code) then
           begin
-            { Can we inline this procedure? }
+            { Can we inline this procedure? The tree has to be copied before
+              it is consumed by the code generator; whether the copy is kept
+              is decided once the code is final, see below }
             if checknodeinlining(procdef) then
               begin
-                Message1(cg_d_autoinlining,procdef.GetTypeName);
-                include(procdef.procoptions,po_inline);
                 CreateInlineInfo;
+                autoinline_candidate:=true;
               end;
           end;
 
@@ -2338,6 +2376,23 @@ implementation
 
             { Perform target-specific processing if necessary }
             postprocess_code;
+
+            { automatic inlining: the code is final, decide }
+            if autoinline_candidate then
+              begin
+                if autoinlining_code_small_enough then
+                  begin
+                    Message1(cg_d_autoinlining,procdef.GetTypeName);
+                    include(procdef.procoptions,po_inline);
+                  end
+                else
+                  begin
+                    FreeAndNil(tnode(procdef.inlininginfo^.code));
+                    dispose(procdef.inlininginfo);
+                    procdef.inlininginfo:=nil;
+                    procdef.has_inlininginfo:=false;
+                  end;
+              end;
 
             { Add end symbol and debug info }
             { this must be done after the pcrelativedata is appended else the distance calculation of
