@@ -52,6 +52,8 @@ fork from silently accumulating changes nobody can account for.
 | 7 | Near pointer in a register parameter tried to store its segment | `i8086-register-paraloc-near-pointer` | in `i8086-integration` (2026-09-04); not submitted |
 | 8 | Frame omitted in i8086 procedures without temps | `i8086-omit-leaf-frame` | in `i8086-integration` (2026-09-04); not submitted |
 | 9 | Only the registers a known callee touches are protected around a call | `i8086-known-callee-clobbers` (on top of 8) | in `i8086-integration` (2026-09-05); not submitted |
+| 10 | Inlined single-assignment function loses its result temp | `inline-drop-funcret-temp` | in `i8086-integration` (2026-09-05); TODO 2026-09-05: generic, candidate for upstream |
+| 11 | Automatic inlining decided by the size of the generated code | `autoinline-code-size` (on top of 8) | in `i8086-integration` (2026-09-05); TODO 2026-09-05: generic, candidate for upstream |
 
 ### 1. FPC_MOVE parameter order in `g_concatcopy_move`
 
@@ -193,6 +195,46 @@ both conventions, `-O-`/`-O2`/`-O3`, medium and large, `-Ct`, `-Cp8086`; the
 msdos RTL rebuilt in both models.  A pre-existing `Internal error 200408162`
 (`-WmLarge -Ccregister`, local passed to a `var` parameter) was found on the
 way and is recorded in `../issues/U10-register-abi/README.md`.
+
+### 10. Inlined single-assignment function loses its result temp
+
+`tcallnode.optimize_funcret_assignment` (`ncal.pas`) replaces the block an
+inlined function expands to by the assigned expression itself when the body
+is a single `result:=expr`, but only if the inliner made no temps for the
+parameters.  A parameter used twice in the body (`(Ch>='A') and (Ch<='Z')`)
+gets a temp, and the result temp stayed: a Boolean predicate was materialised
+into a byte and tested again instead of being the condition.  The patch
+accepts any number of parameter temps whose single reference is in the
+expression: their creation and initialisation move into a new block, their
+deletion is released to a normal temp (`ttempdeletenode.make_release_to_normal`,
+`nbas.pas`) right before the expression, the way the result temp was, so the
+one reference frees them and `getcopy` stays correct.  A parameter referenced
+more than once, a reference temp, or anything between the temps and the
+assignment keeps the old form.  Generic; `I1` on the Q1 corpus −7, the
+inlined `C2` 38 → 31 with `-Ccregister`.  Run-time check:
+`../issues/U8-autoinline/run-runtime.ps1` (13 inline shapes, 15 cases).
+
+### 11. Automatic inlining decided by the size of the generated code
+
+`-Ooautoinline` marked a procedure `inline` in `tcgprocinfo.generate_code`
+(`psub.pas`) before its code was generated, from the node count of the tree
+(`node_count+node_complexity<=25`).  The tree size says nothing about the
+code: a 25-node set test made 71 bytes, and inlining it grew every caller.
+The patch keeps the node test as a prefilter and the tree copy
+(`CreateInlineInfo`) where it was — the tree is consumed by the code
+generator — but sets `po_inline` only after `postprocess_code`, when the code
+is final, and only if it has at most 16 instructions (12 under `-Os`);
+otherwise the copy is freed and `has_inlininginfo` cleared.  The procedure's
+own body is generated without `po_inline`, which changes nothing:
+`globalasmsym` already treats every procedure as a possible inline candidate
+under `-Ooautoinline`, and the local symtable is kept until the unit is done.
+Limits measured on i8086: Retro Bench (`-O2`, `pascal`) 115603 → 115164
+(−439) at 16 — the same up to 24, the old unlimited decision gave −264; the
+MoDOS kernel (`-Os`) 32472 → 32491 (+19) at 12, the least of every limit
+tried (4–16, unlimited: +46 … +188): at `-Os` on i8086 a call costs 3 bytes
+and hardly any expression is shorter, the gain is bodies that disappear.
+`-Ooautoinline` stays outside `-O2`, as upstream.  Details and the sweep:
+`../issues/U8-autoinline/README.md`.
 
 ## Scope of the product
 
