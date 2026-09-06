@@ -13,8 +13,8 @@ release tag, not a branch.
 | Version banner | `fpc -iW` reports `3.3.1-realmode` |
 
 The base is a snapshot of `main`, not 3.2.2: the i8086 backend has moved
-substantially since 3.2.x, and both fixes below apply to code that does not
-exist in the 3.2.x branch.
+substantially since 3.2.x, and several patches below apply to code that does
+not exist in the 3.2.x branch.
 
 Upstream is <https://gitlab.com/freepascal.org/fpc/source>.  Merge requests are
 sent from the GitLab fork `Cooler21/fpcsource`; nothing is submitted upstream
@@ -54,6 +54,7 @@ fork from silently accumulating changes nobody can account for.
 | 9 | Only the registers a known callee touches are protected around a call | `i8086-known-callee-clobbers` (on top of 8) | in `i8086-integration` (2026-09-05); not submitted |
 | 10 | Inlined single-assignment function loses its result temp | `inline-drop-funcret-temp` | in `i8086-integration` (2026-09-05); TODO 2026-09-05: generic, candidate for upstream |
 | 11 | Automatic inlining decided by the size of the generated code | `autoinline-code-size` (on top of 8) | in `i8086-integration` (2026-09-05); TODO 2026-09-05: generic, candidate for upstream |
+| 12 | Product README and provenance notice | `product-readme` | **fork-only** |
 
 ### 1. FPC_MOVE parameter order in `g_concatcopy_move`
 
@@ -235,6 +236,21 @@ tried (4–16, unlimited: +46 … +188): at `-Os` on i8086 a call costs 3 bytes
 and hardly any expression is shorter, the gain is bodies that disappear.
 `-Ooautoinline` stays outside `-O2`, as upstream.  Details and the sweep:
 `../issues/U8-autoinline/README.md`.
+
+### 12. Product README and provenance notice
+
+The upstream README describes the Free Pascal source tree but cannot explain
+why this downstream repository exists.  The product README identifies FPC Real
+Mode as an unofficial build with a pinned base, records the supported target,
+memory-model and CPU matrix, links this manifest, and states that no release
+archive exists until CI and runtime checks pass.
+
+The full upstream commit history is preserved deliberately.  GitHub therefore
+lists upstream FPC authors as contributors; the README makes explicit that this
+is attribution of inherited commits, not participation in or endorsement of
+FPC Real Mode.  The original licensing and upstream links remain prominent.
+This patch is fork-only because upstream has no use for downstream product
+documentation.
 
 ## Scope of the product
 
