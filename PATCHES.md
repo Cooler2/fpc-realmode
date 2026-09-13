@@ -52,7 +52,7 @@ fork from silently accumulating changes nobody can account for.
 | 7 | Near pointer in a register parameter tried to store its segment | `i8086-register-paraloc-near-pointer` | in `i8086-integration` (2026-09-04); not submitted |
 | 8 | Frame omitted in i8086 procedures without temps | `i8086-omit-leaf-frame` | in `i8086-integration` (2026-09-04); not submitted |
 | 9 | Only the registers a known callee touches are protected around a call | `i8086-known-callee-clobbers` (on top of 8) | in `i8086-integration` (2026-09-05); not submitted |
-| 10 | Inlined single-assignment function loses its result temp | `inline-drop-funcret-temp` | in `i8086-integration` (2026-09-05); TODO 2026-09-05: generic, candidate for upstream |
+| 10 | Inlined single-assignment function loses its result temp | `inline-drop-funcret-temp` | in `i8086-integration` (2026-09-05, fixed 2026-09-14); TODO 2026-09-05: generic, candidate for upstream |
 | 11 | Automatic inlining decided by the size of the generated code | `autoinline-code-size` (on top of 8) | in `i8086-integration` (2026-09-05); TODO 2026-09-05: generic, candidate for upstream |
 | 12 | Product README and provenance notice | `product-readme` | **fork-only** |
 
@@ -108,7 +108,9 @@ Fork-only.  Upstream has no use for a manifest of a downstream patch set.
 `.github/workflows/build.yml`: builds the cross compiler on x86_64-linux, then
 the RTL across every target, memory model and CPU line listed below.  Upstream
 has no CI for this target, which is how patch 1 stayed broken for a year and a
-half.
+half.  Its first run, 2026-09-06, found a defect in patch 10 that the local
+builds had not: they build the cross compiler with an older stage-1
+compiler, while CI runs the whole cycle, where the compiler compiles itself.
 
 Fork-only: it is CI for this repository's layout, not for upstream's.
 
@@ -214,6 +216,20 @@ more than once, a reference temp, or anything between the temps and the
 assignment keeps the old form.  Generic; `I1` on the Q1 corpus −7, the
 inlined `C2` 38 → 31 with `-Ccregister`.  Run-time check:
 `../issues/U8-autoinline/run-runtime.ps1` (13 inline shapes, 15 cases).
+
+Fixed 2026-09-14, second commit on the topic branch.  The single reference
+was counted before the later inlining passes: when the expression calls
+another inline function, expanding that call copies the reference for every
+use of the callee's parameter, and the released temp is read after the first
+reference has freed it.  On x86_64 the temp is a register and the compiler
+stopped with `Internal error 200108231` while compiling itself — the first CI
+run failed at level 2 of the cycle on `pgenutil.pas`; on i8086 the temp is in
+memory and nothing stopped.  An expression with a call now keeps the result
+temp when there are parameter temps.  Regression test:
+`tests/test/tinline11.pp`.  The MoDOS kernel (its RTL included) and Retro
+Bench compile to the same code as before the fix, as do the Q1 corpus
+columns with `-Ooautoinline`; only `u8_inline` changes, where a 32-bit
+multiply is a helper call (2 bytes shorter, 15 cases still pass).
 
 ### 11. Automatic inlining decided by the size of the generated code
 
