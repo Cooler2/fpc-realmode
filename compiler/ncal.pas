@@ -5688,7 +5688,12 @@ implementation
         correct: a released temp may be referenced once more).  Parameters
         used more than once keep the result temp; the win is mostly for
         predicates: a Boolean result kept in a temp is materialised and
-        tested again, the expression itself is a condition. }
+        tested again, the expression itself is a condition.
+
+        The single use must stay single after this point, so expr may not
+        contain a call: a later inlining pass expands an inline callee and
+        substitutes a copy of its argument, which holds the parameter temp,
+        for every use of the callee's parameter. }
       var
         hp,
         resstat : tstatementnode;
@@ -5823,7 +5828,10 @@ implementation
           exit;
 
         { every parameter temp must be referenced exactly once by the
-          expression, see above }
+          expression, and nothing may copy that reference later, see above }
+        if (npara>0) and
+           foreachnodestatic(resassign.right,@look_for_call,nil) then
+          exit;
         for i:=0 to npara-1 do
           begin
             cnt.info:=paratemps[i].tempinfo;
