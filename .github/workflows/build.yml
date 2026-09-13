@@ -104,7 +104,12 @@ jobs:
             OPT="-Wm${{ matrix.model }} -Cp${{ matrix.cpu }}"
 
       - name: Show what was built
-        run: ls -l rtl/units/i8086-${{ matrix.target }} | head -20
+        # The units land in rtl/units/msdos for msdos but in
+        # rtl/units/i8086-embedded for embedded, and a step without pipefail
+        # passes on a missing directory, so count the units instead.
+        run: |
+          ls -l rtl/units/*/ | head -20
+          test "$(find rtl/units -name '*.ppu' | wc -l)" -gt 0
 
   # TODO: run the built code under DOS.  This is the hole U5 fell through: the
   # RTL compiled cleanly for a year and a half while nothing it produced could
