@@ -57,6 +57,7 @@ fork from silently accumulating changes nobody can account for.
 | 10 | Inlined single-assignment function loses its result temp | `inline-drop-funcret-temp` | in `i8086-integration` (2026-09-05, fixed 2026-09-14); TODO 2026-09-05: generic, candidate for upstream |
 | 11 | Automatic inlining decided by the size of the generated code | `autoinline-code-size` (on top of 8) | in `i8086-integration` (2026-09-05); TODO 2026-09-05: generic, candidate for upstream |
 | 12 | Product README and provenance notice | `product-readme` | **fork-only** |
+| 13 | Far var-parameter address in split register locations | `i8086-far-address-parameters` | TODO 2026-10-10: file upstream issue and MR; verified locally |
 
 ### 1. FPC_MOVE parameter order in `g_concatcopy_move`
 
@@ -275,6 +276,29 @@ is attribution of inherited commits, not participation in or endorsement of
 FPC Real Mode.  The original licensing and upstream links remain prominent.
 This patch is fork-only because upstream has no use for downstream product
 documentation.
+
+### 13. Far var-parameter address in split register locations
+
+In far-data models, a var parameter with an ordinal source type can be
+assigned two register ABI locations (offset in AX, segment in DX). The i8086
+address loader delegated to the generic implementation, which requires one
+location and aborts with internal error 200408162. The patch builds the complete
+far pointer in a temporary register pair using the existing high-level address
+loader and then transfers it through the existing parameter-location loader.
+It preserves the ABI, stack/static/explicit pointer segments and the near path.
+
+Regression test: `tests/test/cpu16/i8086/tfarpar1.pp`, active in far-data models
+so it does not depend on the independent near-parameter fix (patch 7).
+Windows x64 full cycles passed on integration, the isolated base plus this fix,
+and base plus this fix and upstream-accepted U5. Integration checks: 48 DOS
+sessions (8 near-model test skips), covering small/medium/compact/large,
+pascal/register and O-/O2, with code generated for 8086/286/386. Runtime CPU was
+386. Six U5/inline control tests passed; Halt(7) calibration failed as expected.
+The isolated base requires U5 for DOS runtime: adding only U5 gives four PASS
+for large/register/O2, 8086/386. Q1 procedure sizes, full OMF sections and extern
+symbols are unchanged. Linux-host cycles, native 8086/286 execution and
+tiny/huge models remain untested. Laboratory evidence:
+`../issues/U10-large-register-local/verification-2026-10-10/README.md`.
 
 ## Scope of the product
 
