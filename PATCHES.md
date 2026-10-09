@@ -22,11 +22,13 @@ from this repository.
 
 ## How this file is kept
 
-Every patch must reach exactly one of two states:
+Every patch must reach one of the following states:
 
 - **submitted** — an upstream issue and merge request exist and are linked
   here.  Once it is merged upstream it disappears from this file at the next
   rebase, because the base already contains it.
+- **merged** — accepted upstream after the pinned base; retained as a patch
+  until the next base update includes that upstream commit.
 - **fork-only** — it will not be submitted, and the reason is written down
   here.
 
@@ -43,7 +45,7 @@ fork from silently accumulating changes nobody can account for.
 
 | # | Patch | Topic branch | State |
 | --- | --- | --- | --- |
-| 1 | FPC_MOVE parameter order in `g_concatcopy_move` | `i8086-concatcopy-move-param-order` | **submitted**: issue [#41850], MR [!1533] |
+| 1 | FPC_MOVE parameter order in `g_concatcopy_move` | `i8086-concatcopy-move-param-order` | **merged** 2026-09-16: issue [#41850], MR [!1533], upstream `33222beb8d` |
 | 2 | Segment override dropped when a copy is lowered to FPC_MOVE | `i8086-fpcmove-segment-override` | TODO 2026-09-03: file issue, open MR |
 | 3 | Version banner marker | `product-version-marker` | **fork-only** |
 | 4 | This file | `product-patches-manifest` | **fork-only** |
@@ -70,6 +72,12 @@ the file structures.  The defect became reachable for x86 in `b826ad8b7e` (May
 the reason this repository exists.
 
 Regression test: `tests/webtbs/tw41850.pp`.
+
+Merged upstream on 2026-09-16 as `33222beb8d3d131813de1de41a0456b341a975ed`.
+The diff matches the integration patch `03032ad508f5`. It remains in this
+product until the next base update: `base/2026.1` predates the upstream fix.
+This status update restores the documentation change recorded in the local
+2026-09-18 session but absent from the published integration branch.
 
 ### 2. Segment override dropped when a copy is lowered to FPC_MOVE
 
