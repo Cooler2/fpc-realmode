@@ -1626,6 +1626,16 @@ unit cgcpu;
                       end;
                 end;
               end
+            else if tcgsize2size[cgpara.Size]=4 then
+              begin
+                { Far addresses can occupy two parameter locations. Build the
+                  complete pointer in a temporary register pair before moving
+                  it to the ABI locations; the generic address loader requires
+                  a single location. }
+                tmpreg:=getintregister(list,OS_32);
+                hlcg.a_loadaddr_ref_reg(list,voidfarpointertype,voidfarpointertype,r,tmpreg);
+                a_load_reg_cgpara(list,OS_32,tmpreg,cgpara);
+              end
             else if tcgsize2size[cgpara.Size]=2 then
               begin
                 { a near pointer has no room for the segment, so it is dropped
