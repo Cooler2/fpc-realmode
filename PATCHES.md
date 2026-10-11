@@ -61,6 +61,8 @@ fork from silently accumulating changes nobody can account for.
 | 14 | Calibrated DOS runtime CI with matching RTL artifacts | `product/dos-runtime-ci` | **fork-only** |
 | 15 | Split overlapping indexed register address parameters | `i8086-indexed-address-pressure` | TODO 2026-10-11: upstream discussion; verified locally |
 | 16 | Indexed-address regression in DOS CI | `product/indexed-address-ci` | **fork-only** |
+| 17 | Split an indexed address after its incoming BX value is stored | `i8086-indexed-parameter-prefix` | TODO 2026-10-11: upstream candidate; expanded pinned-base harness needs diagnosis |
+| 18 | Single-address prefix regression in DOS CI and manifest | `product/indexed-prefix-ci` | **fork-only** |
 
 ### 1. FPC_MOVE parameter order in `g_concatcopy_move`
 
@@ -350,6 +352,37 @@ single-base MCB.Build spill or pointer induction. Evidence:
 The fork-only DOS runner includes tidxpar1 in each Small/Large, 286/386 and
 pascal/register profile. The job now expects 28 PASS and eight Halt(7) FAIL
 verdicts, with the same matching compiler/RTL artifacts as patch 14.
+
+### 17. Indexed address after a straight-line BX field store
+
+Standalone topic `929137d069d8`, integration compiler `efea0d59958a`.
+An incoming scalar BX parameter prevents an indexed var/const address from
+staying in BX even after that scalar is consumed. Split the address once
+after its final field store in a straight-line prefix, and retain the old
+loop-aware live end for the suffix. Require an actual address/value store
+conflict; otherwise the extra copy may worsen nested loops. Far data, pointer
+values, USEEBP, PIC, debug info and inline assembly retain the old path.
+
+MCB.Build drops from 67 to 50 bytes. All other Q3 procedure sizes, non-code
+segments and extern symbols are unchanged. Four Q1 profiles retain the full
+OMF closure. Integration and isolated Win64 full cycles pass. The new
+taddrprefix1 and existing tidxpar1 pass 100 calibrated DOS cases on integration:
+five model/CPU profiles, two global ABI defaults and five optimizer/debug
+profiles. The existing Build test passes on clean base and base plus only
+this patch. Generated 8086/286/386 code executes on emulated 386.
+
+The expanded test hangs without a guest verdict on the old pinned base both
+with and without this patch. That harness boundary still needs diagnosis
+before independent upstream submission. Native 8086/286, tiny/huge, embedded
+runtime and the full FPC testsuite remain unvalidated. Evidence:
+`../issues/U10-single-base-spill/README.md`.
+
+### 18. Prefix-address regression in DOS CI
+
+The fork-only guest runner includes taddrprefix1 alongside tidxpar1 in every
+Small/Large, 286/386, pascal/register profile. The updated matrix expects
+36 PASS and eight Halt(7) FAIL verdicts. Local Win64-generated runtime
+acceptance is recorded above; a new Linux CI run requires a subsequent push.
 
 ## Scope of the product
 
