@@ -58,6 +58,7 @@ fork from silently accumulating changes nobody can account for.
 | 11 | Automatic inlining decided by the size of the generated code | `autoinline-code-size` (on top of 8) | in `i8086-integration` (2026-09-05); TODO 2026-09-05: generic, candidate for upstream |
 | 12 | Product README and provenance notice | `product-readme` | **fork-only** |
 | 13 | Far var-parameter address in split register locations | `i8086-far-address-parameters` | TODO 2026-10-10: file upstream issue and MR; verified locally |
+| 14 | Calibrated DOS runtime CI with matching RTL artifacts | `product/dos-runtime-ci` | **fork-only** |
 
 ### 1. FPC_MOVE parameter order in `g_concatcopy_move`
 
@@ -299,6 +300,22 @@ for large/register/O2, 8086/386. Q1 procedure sizes, full OMF sections and exter
 symbols are unchanged. Linux-host cycles, native 8086/286 execution and
 tiny/huge models remain untested. Laboratory evidence:
 `../issues/U10-large-register-local/verification-2026-10-10/README.md`.
+
+### 14. Calibrated DOS runtime CI
+
+The build matrix now preserves each msdos RTL artifact and passes the same
+compiler and matching Small/Large, 80286/80386 units to a DOS runtime job.
+It compiles tinline11 and tw41850 under pascal/register, plus tfarpar1 in
+Large, and checks a fresh guest ERRORLEVEL verdict. Each profile/ABI first
+calibrates Halt(7); a missing verdict is a failure even if the emulator exits.
+Open Watcom linker/librarian are fetched separately from a pinned release with
+SHA256 verification. The job retains maps, verdicts and logs as artifacts.
+
+Local Linux full cycle and four RTL builds on source 3894e6b04c2c passed,
+followed by 20 expected PASS and 8 expected calibration FAIL. DOSBox executes
+an emulated 386; generating 286 code does not prove native 286 acceptance.
+The new workflow awaits its first GitHub run. Laboratory evidence:
+`../issues/P1-ci-runtime/README.md`. This CI is fork-only.
 
 ## Scope of the product
 
