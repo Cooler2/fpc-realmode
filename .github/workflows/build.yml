@@ -111,11 +111,45 @@ jobs:
           ls -l rtl/units/*/ | head -20
           test "$(find rtl/units -name '*.ppu' | wc -l)" -gt 0
 
-  # TODO: run the built code under DOS.  This is the hole U5 fell through: the
-  # RTL compiled cleanly for a year and a half while nothing it produced could
-  # run.  Candidates to investigate: dosbox from apt, or FreeDOS under QEMU.
-  # Needs wlink from Open Watcom (rolling 'Current-build' snapshot,
-  # ow-snapshot.tar.xz; the local toolchain here is the 2026-08-03 build).
+      - uses: actions/upload-artifact@v4
+        if: matrix.target == 'msdos'
+        with:
+          name: rtl-msdos-${{ matrix.model }}-${{ matrix.cpu }}
+          path: rtl/units/msdos/
+          if-no-files-found: error
+
+  dos:
+    name: DOS runtime (emulated 386)
+    needs: [compiler, rtl]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install emulator and assembler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y dosbox nasm
+      - uses: actions/download-artifact@v4
+        with:
+          name: ppcross8086
+          path: compiler
+      - run: chmod +x compiler/ppcross8086
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: rtl-msdos-*
+          path: ci-output/rtl
+      - name: Fetch pinned DOS linker and librarian
+        run: bash .github/scripts/fetch-dos-binutils.sh ci-output/tools
+      - name: Run calibrated DOS regressions
+        run: |
+          python3 .github/scripts/test-i8086-dos.py \
+            --compiler compiler/ppcross8086 --rtl-root ci-output/rtl \
+            --binutils ci-output/tools/binl64 --output ci-output/dos
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dos-runtime-evidence
+          path: ci-output/dos/
+          if-no-files-found: warn
 
   # TODO: compare code sizes against the baseline in issues/Q1-optimization-
   # matrix/.  The corpus already exists and is meant to be re-run, which turns
