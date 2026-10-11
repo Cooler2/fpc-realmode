@@ -60,7 +60,8 @@ def main():
                 rtl=args.rtl_root.resolve()/f'rtl-msdos-{model}-{cpu}'
                 if not (rtl/'system.ppu').is_file(): raise RuntimeError(f'Missing matching RTL: {rtl}')
                 tests=[('exit7',calibration,'FAIL'),('tinline11',root/'tests/test/tinline11.pp','PASS'),
-                       ('tw41850',root/'tests/webtbs/tw41850.pp','PASS')]
+                       ('tw41850',root/'tests/webtbs/tw41850.pp','PASS'),
+                       ('tidxpar1',root/'tests/test/cpu16/i8086/tidxpar1.pp','PASS')]
                 # Do not count the far test's near-data skip as coverage.
                 if model=='Large': tests.append(('tfarpar1',root/'tests/test/cpu16/i8086/tfarpar1.pp','PASS'))
                 for abi in ['pascal','register']:
