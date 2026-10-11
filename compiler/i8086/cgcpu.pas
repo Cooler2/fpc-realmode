@@ -93,6 +93,7 @@ unit cgcpu;
 
         procedure get_32bit_ops(op: TOpCG; out op1,op2: TAsmOp);
      protected
+        procedure split_indexed_parameter_bases(list:TAsmList;headertai:tai);
         procedure a_load_ref_reg_internal(list : TAsmList;fromsize,tosize: tcgsize;const ref : treference;reg : tregister;isdirect:boolean);override;
      end;
 
@@ -157,7 +158,113 @@ unit cgcpu;
             if getsupreg(current_procinfo.got) < first_int_imreg then
               include(rg[R_INTREGISTER].used_in_proc,getsupreg(current_procinfo.got));
           end;
+        split_indexed_parameter_bases(list,headertai);
         inherited do_register_allocation(list,headertai);
+      end;
+
+
+    procedure tcg8086.split_indexed_parameter_bases(list:TAsmList;headertai:tai);
+      type
+        tbaseinfo=record
+          reg:tregister;
+          first,last:tai;
+          firstpos,lastpos:longint;
+          indexed,conflicting:boolean;
+        end;
+      var
+        bases:array of tbaseinfo;
+        para:tparavarsym;
+        p:tai;
+        i,j,k,n,pos:longint;
+        temp:TAsmList;
+        reg:tregister;
+        first,last:tai;
+      begin
+        { With BP reserved, two overlapping indexed bases both require BX.
+          Split only these conflicting parameter lifetimes. A single base
+          can stay in BX without adding a move on every loop iteration. }
+        if not(current_settings.x86memorymodel in x86_near_data_models) or
+           (current_procinfo.procdef.proccalloption<>pocall_register) or
+           (cs_useebp in current_settings.optimizerswitches) or
+           (cs_create_pic in current_settings.moduleswitches) then
+          exit;
+        SetLength(bases,current_procinfo.procdef.paras.count);
+        n:=0;
+        for i:=0 to current_procinfo.procdef.paras.count-1 do
+          begin
+            para:=tparavarsym(current_procinfo.procdef.paras[i]);
+            if (para.varregable=vr_addr) and
+               (para.localloc.loc in [LOC_REGISTER,LOC_CREGISTER]) and
+               (para.localloc.size in [OS_16,OS_S16]) and
+               (getsupreg(para.localloc.register)>=first_int_imreg) and
+               assigned(para.paraloc[calleeside].location) and
+               (para.paraloc[calleeside].location^.loc in [LOC_REGISTER,LOC_CREGISTER]) then
+              begin
+                bases[n].reg:=para.localloc.register;
+                bases[n].first:=rg[R_INTREGISTER].live_start[getsupreg(bases[n].reg)];
+                bases[n].last:=rg[R_INTREGISTER].live_end[getsupreg(bases[n].reg)];
+                inc(n);
+              end;
+          end;
+        if n<2 then
+          exit;
+        pos:=0;
+        p:=headertai;
+        while assigned(p) do
+          begin
+            for j:=0 to n-1 do
+              begin
+                if p=bases[j].first then
+                  bases[j].firstpos:=pos;
+                if p=bases[j].last then
+                  bases[j].lastpos:=pos;
+              end;
+            if (p.typ=ait_instruction) and (taicpu(p).opcode in [A_MOV,A_MOVZX,A_MOVSX]) then
+              for i:=0 to taicpu(p).ops-1 do
+                if (taicpu(p).oper[i]^.typ=top_ref) and
+                   (taicpu(p).oper[i]^.ref^.index<>NR_NO) then
+                  for j:=0 to n-1 do
+                    if taicpu(p).oper[i]^.ref^.base=bases[j].reg then
+                      bases[j].indexed:=true;
+            inc(pos);
+            p:=tai(p.next);
+          end;
+        for j:=0 to n-1 do
+          for k:=j+1 to n-1 do
+            if (bases[j].reg<>bases[k].reg) and
+               bases[j].indexed and bases[k].indexed and
+               (bases[j].firstpos<bases[k].lastpos) and
+               (bases[k].firstpos<bases[j].lastpos) then
+              begin
+                bases[j].conflicting:=true;
+                bases[k].conflicting:=true;
+              end;
+        p:=headertai;
+        while assigned(p) do
+          begin
+            if (p.typ=ait_instruction) and (taicpu(p).opcode in [A_MOV,A_MOVZX,A_MOVSX]) then
+              for i:=0 to taicpu(p).ops-1 do
+                if (taicpu(p).oper[i]^.typ=top_ref) and
+                   (taicpu(p).oper[i]^.ref^.index<>NR_NO) then
+                  for j:=0 to n-1 do
+                    if bases[j].conflicting and
+                       (taicpu(p).oper[i]^.ref^.base=bases[j].reg) then
+                      begin
+                        temp:=TAsmList.create;
+                        reg:=getintregister(temp,OS_16);
+                        first:=rg[R_INTREGISTER].live_start[getsupreg(bases[j].reg)];
+                        last:=rg[R_INTREGISTER].live_end[getsupreg(bases[j].reg)];
+                        a_load_reg_reg(temp,OS_16,OS_16,bases[j].reg,reg);
+                        { Adding the copy must not shorten the original lifetime. }
+                        rg[R_INTREGISTER].live_start[getsupreg(bases[j].reg)]:=first;
+                        rg[R_INTREGISTER].live_end[getsupreg(bases[j].reg)]:=last;
+                        taicpu(p).oper[i]^.ref^.base:=reg;
+                        add_reg_instruction(p,reg);
+                        list.insertListBefore(p,temp);
+                        temp.free;
+                      end;
+            p:=tai(p.next);
+          end;
       end;
 
 
