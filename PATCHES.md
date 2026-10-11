@@ -59,6 +59,8 @@ fork from silently accumulating changes nobody can account for.
 | 12 | Product README and provenance notice | `product-readme` | **fork-only** |
 | 13 | Far var-parameter address in split register locations | `i8086-far-address-parameters` | TODO 2026-10-10: file upstream issue and MR; verified locally |
 | 14 | Calibrated DOS runtime CI with matching RTL artifacts | `product/dos-runtime-ci` | **fork-only** |
+| 15 | Split overlapping indexed register address parameters | `i8086-indexed-address-pressure` | TODO 2026-10-11: upstream discussion; verified locally |
+| 16 | Indexed-address regression in DOS CI | `product/indexed-address-ci` | **fork-only** |
 
 ### 1. FPC_MOVE parameter order in `g_concatcopy_move`
 
@@ -314,8 +316,40 @@ SHA256 verification. The job retains maps, verdicts and logs as artifacts.
 Local Linux full cycle and four RTL builds on source 3894e6b04c2c passed,
 followed by 20 expected PASS and 8 expected calibration FAIL. DOSBox executes
 an emulated 386; generating 286 code does not prove native 286 acceptance.
-The new workflow awaits its first GitHub run. Laboratory evidence:
+GitHub run [38128923774](https://github.com/Cooler2/fpc-realmode/actions/runs/38128923774)
+passed on 7c9adaed5687, including the DOS job. Laboratory evidence:
 `../issues/P1-ci-runtime/README.md`. This CI is fork-only.
+
+### 15. Overlapping indexed register address parameters
+
+When BP is reserved, indexed address parameters compete for BX throughout
+their virtual register lifetimes. Before register allocation, the i8086 code
+generator finds overlapping 16-bit var/const parameter bases used by indexed
+memory moves, and copies only these bases into short-lived registers at the
+memory access. It retains the original live ranges. Single-base procedures,
+ordinary pointer values, far-data models, USEEBP and PIC keep the old path.
+
+On the five-unit Q3 corpus, MCB.SetName drops from 36 to 21 bytes; all other
+procedure sizes, data/BSS and extern symbols remain unchanged. Four Q1 profiles
+retain both procedure sizes and complete OMF sections/extern closure. Win64
+full cycles pass on integration and isolated base plus patch. Regression test
+`tests/test/cpu16/i8086/tidxpar1.pp` passes in 40 DOS profiles: small/medium/large,
+generated 8086/286/386, O-/O2/NOREGVAR/USEEBP and both global ABI defaults.
+The test callees explicitly use register ABI and cover byte/word copying,
+three addresses, branches, zero count and aliases. Pointer-typed call views
+avoid the independent baseline near-address-loader defect; clean-base and
+isolated-topic runtime controls both pass. DOS executes on emulated 386.
+
+Native 8086/286, tiny/huge, embedded runtime and full FPC testsuite are not
+validated. This addresses overlapping indexed parameters, not the independent
+single-base MCB.Build spill or pointer induction. Evidence:
+`../issues/U10-address-pressure/README.md`.
+
+### 16. Indexed-address regression in DOS CI
+
+The fork-only DOS runner includes tidxpar1 in each Small/Large, 286/386 and
+pascal/register profile. The job now expects 28 PASS and eight Halt(7) FAIL
+verdicts, with the same matching compiler/RTL artifacts as patch 14.
 
 ## Scope of the product
 
