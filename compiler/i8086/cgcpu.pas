@@ -93,6 +93,7 @@ unit cgcpu;
 
         procedure get_32bit_ops(op: TOpCG; out op1,op2: TAsmOp);
      protected
+        procedure split_indexed_parameter_prefix(list:TAsmList;headertai:tai);
         procedure split_indexed_parameter_bases(list:TAsmList;headertai:tai);
         procedure a_load_ref_reg_internal(list : TAsmList;fromsize,tosize: tcgsize;const ref : treference;reg : tregister;isdirect:boolean);override;
      end;
@@ -158,8 +159,143 @@ unit cgcpu;
             if getsupreg(current_procinfo.got) < first_int_imreg then
               include(rg[R_INTREGISTER].used_in_proc,getsupreg(current_procinfo.got));
           end;
+        split_indexed_parameter_prefix(list,headertai);
         split_indexed_parameter_bases(list,headertai);
         inherited do_register_allocation(list,headertai);
+      end;
+
+
+    procedure tcg8086.split_indexed_parameter_prefix(list:TAsmList;headertai:tai);
+      var
+        para:tparavarsym;
+        base,bxpara,reg:tregister;
+        bxlast,first,last,cut,p:tai;
+        temp:TAsmList;
+        i,j,n:longint;
+        pastcut,indexed,valid:boolean;
+      begin
+        { An incoming BX parameter can prevent an indexed address parameter
+          from staying in BX. Split at the end of its straight-line lifetime,
+          rather than copying the address at every access inside a loop. }
+        if not(current_settings.x86memorymodel in x86_near_data_models) or
+           (current_procinfo.procdef.proccalloption<>pocall_register) or
+           (cs_useebp in current_settings.optimizerswitches) or
+           (cs_create_pic in current_settings.moduleswitches) or
+           (cs_debuginfo in current_settings.moduleswitches) or
+           (pi_has_assembler_block in current_procinfo.flags) then
+          exit;
+        base:=NR_NO;
+        bxpara:=NR_NO;
+        n:=0;
+        for i:=0 to current_procinfo.procdef.paras.count-1 do
+          begin
+            para:=tparavarsym(current_procinfo.procdef.paras[i]);
+            if (para.localloc.loc in [LOC_REGISTER,LOC_CREGISTER]) and
+               (para.localloc.size in [OS_16,OS_S16]) and
+               (getsupreg(para.localloc.register)>=first_int_imreg) and
+               assigned(para.paraloc[calleeside].location) and
+               (para.paraloc[calleeside].location^.loc in [LOC_REGISTER,LOC_CREGISTER]) then
+              begin
+                if para.varregable=vr_addr then
+                  begin
+                    base:=para.localloc.register;
+                    inc(n);
+                  end
+                else if getsupreg(para.paraloc[calleeside].location^.register)=RS_BX then
+                  bxpara:=para.localloc.register;
+              end;
+          end;
+        if (n<>1) or (bxpara=NR_NO) then
+          exit;
+        first:=rg[R_INTREGISTER].live_start[getsupreg(base)];
+        last:=rg[R_INTREGISTER].live_end[getsupreg(base)];
+        bxlast:=rg[R_INTREGISTER].live_end[getsupreg(bxpara)];
+        if not assigned(first) or not assigned(last) or not assigned(bxlast) then
+          exit;
+        { Require an actual address/value conflict: the last use of the BX
+          parameter stores it through this base. Splitting an otherwise idle
+          address can only add pressure, e.g. in nested arithmetic loops. }
+        if (bxlast.typ<>ait_instruction) or (taicpu(bxlast).opcode<>A_MOV) or
+           (taicpu(bxlast).ops<>2) or
+           (taicpu(bxlast).oper[0]^.typ<>top_reg) or
+           (taicpu(bxlast).oper[0]^.reg<>bxpara) or
+           (taicpu(bxlast).oper[1]^.typ<>top_ref) or
+           (taicpu(bxlast).oper[1]^.ref^.base<>base) or
+           (taicpu(bxlast).oper[1]^.ref^.index<>NR_NO) then
+          exit;
+        cut:=tai(bxlast.next);
+        if not assigned(cut) then
+          exit;
+        pastcut:=false;
+        indexed:=false;
+        valid:=false;
+        p:=headertai;
+        while assigned(p) do
+          begin
+            if p=first then
+              valid:=true;
+            if p=cut then
+              begin
+                if not valid then
+                  exit;
+                pastcut:=true;
+              end;
+            { The copy must dominate the entire suffix, including loop entry. }
+            if not pastcut and ((p.typ=ait_label) or
+               ((p.typ=ait_instruction) and
+                (taicpu(p).is_jmp or (taicpu(p).opcode=A_CALL) or
+                 (taicpu(p).opcode=A_RET) or (taicpu(p).opcode=A_RETF)))) then
+              exit;
+            if p.typ=ait_instruction then
+              for j:=0 to taicpu(p).ops-1 do
+                case taicpu(p).oper[j]^.typ of
+                  top_reg:
+                    if getsupreg(taicpu(p).oper[j]^.reg)=getsupreg(base) then
+                      { Only the original parameter definition may write it. }
+                      if (p<>first) or (taicpu(p).opcode<>A_MOV) or (j<>1) then
+                        exit;
+                  top_ref:
+                    begin
+                      if getsupreg(taicpu(p).oper[j]^.ref^.index)=getsupreg(base) then
+                        exit;
+                      if taicpu(p).oper[j]^.ref^.base=base then
+                        if taicpu(p).oper[j]^.ref^.index<>NR_NO then
+                          begin
+                            if not pastcut then
+                              exit;
+                            indexed:=true;
+                          end;
+                    end;
+                  else
+                    ;
+                end;
+            p:=tai(p.next);
+          end;
+        if not pastcut or not indexed then
+          exit;
+        temp:=TAsmList.create;
+        reg:=getintregister(temp,OS_16);
+        a_load_reg_reg(temp,OS_16,OS_16,base,reg);
+        { The source ends at the copy. Keep the suffix's original end, which
+          may extend beyond the last textual use to cover a loop back edge. }
+        rg[R_INTREGISTER].live_start[getsupreg(base)]:=first;
+        rg[R_INTREGISTER].live_end[getsupreg(base)]:=tai(temp.last);
+        p:=cut;
+        while assigned(p) do
+          begin
+            if p.typ=ait_instruction then
+              for j:=0 to taicpu(p).ops-1 do
+                if (taicpu(p).oper[j]^.typ=top_ref) and
+                   (taicpu(p).oper[j]^.ref^.base=base) then
+                  begin
+                    taicpu(p).oper[j]^.ref^.base:=reg;
+                    add_reg_instruction(p,reg);
+                  end;
+            p:=tai(p.next);
+          end;
+        rg[R_INTREGISTER].live_end[getsupreg(reg)]:=last;
+        list.insertListBefore(cut,temp);
+        temp.free;
       end;
 
 
